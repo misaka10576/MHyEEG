@@ -1,1 +1,5 @@
 /MAHNOB-HCI/
+/.vscode/
+/hci-tagging-database/
+__pycache__/
+*.py[cod]

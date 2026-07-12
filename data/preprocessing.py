@@ -21,8 +21,8 @@ def list_files(directory, sorted_dir):
         files.append(single)
     return files
 
-def preprocess(sessions_dir, save_path, verbose=False):
-    for dir_id in tqdm(range(len(sessions_dir)), desc='Preprocessing'):
+def preprocess(sessions_dir, save_path, verbose=False, show_progress=True):
+    for dir_id in tqdm(range(len(sessions_dir)), desc='Preprocessing', disable=not show_progress):
         dir = sessions_dir[dir_id]
 
         # SESSION.XML --------------------------------------------------------------
@@ -247,12 +247,37 @@ if __name__ == '__main__':
     parser.add_argument('--sessions_path', type=str, default='hci-tagging-database/Sessions', help='Path to Sessions folder')
     parser.add_argument('--save_path', type=str, default='hci-tagging-database/preproc_data', help='Path to save preprocessed data')
     parser.add_argument('--verbose',  type=bool, action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument('--skip_errors', action='store_true',
+                        help='Skip an entire session when preprocessing fails and continue with the next one')
     args = parser.parse_args()
 
     sessions_dir = list_files(args.sessions_path, sorted_dir=True)
     # print(sessions_dir[464])
     
-    preprocess(sessions_dir, args.save_path, args.verbose)
-    # preprocess(sessions_dir[464:], args.save_path, args.verbose) # most recent code had this
+    if not args.skip_errors:
+        preprocess(sessions_dir, args.save_path, args.verbose)
+    else:
+        os.makedirs(args.save_path, exist_ok=True)
+        error_log = os.path.join(args.save_path, 'preprocessing_errors.log')
+        failures = []
 
-    
+        # Rewrite the log for this run so old failures are not confused with new ones.
+        with open(error_log, 'w', encoding='utf-8') as log_file:
+            for session_dir in tqdm(sessions_dir, desc='Preprocessing'):
+                try:
+                    # Process one complete session at a time. If it fails, no label is
+                    # appended because labels are written only at the end of preprocess().
+                    preprocess([session_dir], args.save_path, args.verbose, show_progress=False)
+                except Exception as exc:
+                    message = '{}\t{}: {}'.format(
+                        session_dir, type(exc).__name__, str(exc).replace('\n', ' '))
+                    failures.append(message)
+                    log_file.write(message + '\n')
+                    log_file.flush()
+                    tqdm.write('\033[91mSkipped {}: {}\033[0m'.format(session_dir, exc))
+
+        if failures:
+            print('\nFinished with {} failed session(s). See: {}'.format(len(failures), error_log))
+        else:
+            print('\nFinished successfully. No sessions were skipped.')
+    # preprocess(sessions_dir[464:], args.save_path, args.verbose) # most recent code had this

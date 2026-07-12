@@ -105,4 +105,3 @@ dependencies:
       - tzdata==2026.3
       - urllib3==2.7.0
       - wandb==0.28.0
-prefix: /root/miniconda3/envs/mhyeeg

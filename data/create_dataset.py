@@ -47,7 +47,15 @@ class DatasetCreator:
     def save_to_list(self):
         """Grabs data from hierarchical structure and unpacks all values.
         Add gathered data to a list as a single sample."""
-        sub_dir = list_files(self.preproc_data, sorted_dir=False)
+        # Only consider subject directories (for example S01). Files such as
+        # preprocessing_errors.log may also be stored in preproc_data.
+        sub_dir = [
+            path for path in list_files(self.preproc_data, sorted_dir=False)
+            if os.path.isdir(path)
+            and os.path.basename(path).startswith('S')
+            and os.path.basename(path)[1:].isdigit()
+        ]
+        sub_dir = sorted(sub_dir, key=lambda path: int(os.path.basename(path)[1:]))
         data_list = []
         labels = []
         for dir in tqdm(sub_dir, desc='Reading data'):  # for each subject/folder
@@ -68,7 +76,7 @@ class DatasetCreator:
                                     .format(id)), delimiter=',')
                 eye_dist_data = np.genfromtxt(os.path.join(dir, '{}_EYE_DIST.csv'
                                     .format(id)), delimiter=',')
-                gsr_data = np.genfromtxt(os.path.join(dir, '{}_GSR-NO-BASE.csv'
+                gsr_data = np.genfromtxt(os.path.join(dir, '{}_GSR.csv'
                                     .format(id)), delimiter=',')
                 eeg_data = np.genfromtxt(os.path.join(dir, '{}_EEG.csv'
                                      .format(id)), delimiter=',')
