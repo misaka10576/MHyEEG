@@ -48,6 +48,7 @@ Eleonora Lopez, Eleonora Chiarantano, [Eleonora Grassucci](https://sites.google.
 To reproduce the results, use the corresponding configuration file for each model and task:
 
 - `configs/h2.yml` → H2 model
+- `configs/cross_attention_h2.yml` → H2 with cross-modal attention fusion
 - `configs/phemonet.yml` → PHemoNet
 - `configs/hyperfusenet_arousal.yml` → HyperFuseNet for valence
 - `configs/hyperfusenet_valence.yml` → HyperFuseNet for arousal
@@ -60,6 +61,45 @@ python main.py --train_file_path /path/to/arsl_or_vlnc_train.pt --test_file_path
 To do a sweep (used in HyperFuseNet paper) run: `python sweep.py`
 
 Experiments will be directly tracked on [Weight&Biases](https://wandb.ai/).
+
+#### Cross-modal attention H2 on AutoDL
+
+`CrossAttentionH2` keeps the four H2 encoders and PHM classifier, but replaces
+the concatenation fusion with modality-level cross-attention. Each query
+modality can attend only to the other three modalities.
+
+Run it from the repository root:
+
+```bash
+python main.py \
+  --config configs/cross_attention_h2.yml \
+  --train_file_path /path/to/train_augmented_data_Arsl.pt \
+  --test_file_path /path/to/test_data_Arsl.pt
+```
+
+The expected model inputs are Eye `[B, 4, 600]`, GSR `[B, 1, 1280]`, EEG
+`[B, 10, 1280]`, and ECG `[B, 3, 1280]`. Attention settings can be changed in
+the YAML file through `attention_dim`, `attention_heads`, `attention_layers`,
+and `attention_dropout`.
+
+For diagnostics:
+
+```python
+logits, info = model(eye, gsr, eeg, ecg, return_attention=True)
+cross_attention = info["cross_attention"]
+pooling_weights = info["pooling_weights"]
+```
+
+`cross_attention` has shape
+`[layer, batch, query_modality, head, other_modality]`, while
+`pooling_weights` has shape `[batch, modality]`. The modality order is Eye,
+GSR, EEG, and ECG.
+
+The dataset-free checks can be run with:
+
+```bash
+python -m unittest tests.test_cross_attention
+```
 
 ### Cite
 

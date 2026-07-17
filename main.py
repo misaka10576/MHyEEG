@@ -12,6 +12,7 @@ from models.hyperfusenet import HyperFuseNet
 from models.hyperfusenetv2 import HyperFuseNetv2
 from models.hypernet import PHemoNet, HyperNetv2
 from models.h2 import H2
+from models.cross_attention_h2 import CrossAttentionH2
 from models.baselines import ConvNet
 
 def main(args, n_workers):
@@ -45,8 +46,24 @@ def main(args, n_workers):
     elif args.model == 'H2': # model proposed in MLSP 2024 (aka ConvHyperNet)
         net = H2(n=args.n, dropout_rate=args.dropout_rate, 
                            n_eye=args.n_eye, n_gsr=args.n_gsr, n_eeg=args.n_eeg, n_ecg=args.n_ecg)
+    elif args.model == 'CrossAttentionH2':
+        net = CrossAttentionH2(
+            n=args.n,
+            dropout_rate=args.dropout_rate,
+            n_eye=args.n_eye,
+            n_gsr=args.n_gsr,
+            n_eeg=args.n_eeg,
+            n_ecg=args.n_ecg,
+            attention_dim=args.attention_dim,
+            attention_heads=args.attention_heads,
+            attention_layers=args.attention_layers,
+            attention_dropout=args.attention_dropout,
+            num_classes=num_classes,
+        )
     elif args.model == 'ConvNet': # Same as H2 but with conv in encoders, used for ablations
         net = ConvNet(dropout_rate=args.dropout_rate)
+    else:
+        raise ValueError(f"Unknown model: {args.model}")
     
     wandb.init(project="MHyEEG")
     wandb.config.update(args, allow_val_change=True)
@@ -83,7 +100,7 @@ if __name__ == '__main__':
     parser.add_argument('--train_file_path', type=str, default='hci-tagging-database/torch_datasets/train_augmented_data_Arsl.pt', help='Path to training .pt file')
     parser.add_argument('--test_file_path', type=str, default='hci-tagging-database/torch_datasets/test_data_Arsl.pt', help='Path to test .pt file')
     parser.add_argument('--checkpoint_folder', type=str, default='checkpoints')
-    parser.add_argument('--model', type=str, default='H2', help='Model to use (HyperFuseNet, PHemoNet, H2)')
+    parser.add_argument('--model', type=str, default='H2', help='Model to use (HyperFuseNet, PHemoNet, H2, CrossAttentionH2)')
     parser.add_argument('--num_workers', default=1, help="Number of workers, 'max' for maximum number")
     parser.add_argument('--cuda', type=bool, default=True)
     parser.add_argument('--gpu_num', type=int, default=0)
@@ -92,6 +109,10 @@ if __name__ == '__main__':
     parser.add_argument('--n_gsr', type=int, default=1, help="n parameter for PHM layers")
     parser.add_argument('--n_eeg', type=int, default=10, help="n parameter for PHM layers")
     parser.add_argument('--n_ecg', type=int, default=3, help="n parameter for PHM layers")
+    parser.add_argument('--attention_dim', type=int, default=256)
+    parser.add_argument('--attention_heads', type=int, default=8)
+    parser.add_argument('--attention_layers', type=int, default=2)
+    parser.add_argument('--attention_dropout', type=float, default=0.1)
     parser.add_argument('--train_batch_size', type=int, default=64)
     parser.add_argument('--test_batch_size', type=int, default=32)
     parser.add_argument('--dropout_rate', type=float, default=0.5)
