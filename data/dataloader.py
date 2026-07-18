@@ -26,7 +26,14 @@ class MyDataset(torch.utils.data.Dataset):
 
         return sample, label
 
-def MyDataLoader(train_file, test_file, train_batch_size, test_batch_size, num_workers=1):
+def MyDataLoader(
+    train_file,
+    test_file,
+    train_batch_size,
+    test_batch_size,
+    num_workers=1,
+    pin_memory=False,
+):
     print("----Loading dataset----")
     
     training = torch.load(train_file)  # Loads an object saved with torch.save() from a file
@@ -35,8 +42,26 @@ def MyDataLoader(train_file, test_file, train_batch_size, test_batch_size, num_w
     train_dataset = MyDataset(training)
     eval_dataset = MyDataset(validation)
 
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True, num_workers=num_workers)
-    eval_loader = torch.utils.data.DataLoader(eval_dataset, batch_size=test_batch_size, shuffle=False, num_workers=num_workers)
+    loader_kwargs = {
+        "num_workers": num_workers,
+        "pin_memory": pin_memory,
+        "persistent_workers": num_workers > 0,
+    }
+    if num_workers > 0:
+        loader_kwargs["prefetch_factor"] = 2
+
+    train_loader = torch.utils.data.DataLoader(
+        train_dataset,
+        batch_size=train_batch_size,
+        shuffle=True,
+        **loader_kwargs,
+    )
+    eval_loader = torch.utils.data.DataLoader(
+        eval_dataset,
+        batch_size=test_batch_size,
+        shuffle=False,
+        **loader_kwargs,
+    )
     
     y_train = [y for x, y in training]
     _, train_distr = np.unique(y_train, return_counts=True) # number of labels in train dataset, for each class

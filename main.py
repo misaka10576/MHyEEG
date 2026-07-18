@@ -15,9 +15,17 @@ from models.h2 import H2
 from models.cross_attention_h2 import CrossAttentionH2
 from models.baselines import ConvNet
 
+def parse_num_workers(value):
+    if value == 'max':
+        return value
+    workers = int(value)
+    if workers < 0:
+        raise argparse.ArgumentTypeError("num_workers must be non-negative or 'max'")
+    return workers
+
 def main(args, n_workers):
 
-    # Set number of classes
+    # 设置类别数量
     num_classes = 3
     lr = args.max_lr / 10
     # lr = args.lr
@@ -25,7 +33,8 @@ def main(args, n_workers):
                                                              test_file=args.test_file_path, 
                                                              train_batch_size=args.train_batch_size, 
                                                              test_batch_size=args.test_batch_size,
-                                                             num_workers=n_workers)
+                                                             num_workers=n_workers,
+                                                             pin_memory=args.cuda and torch.cuda.is_available())
 
     eye, gsr, eeg, ecg = next(iter(train_loader))[0]
     print("Eye shape: ", eye.shape)
@@ -33,17 +42,17 @@ def main(args, n_workers):
     print("EEG shape: ", eeg.shape)
     print("ECG shape: ", ecg.shape)       
     
-    if args.model == 'HyperFuseNet': # Model proposed in ICASSPW 2023
+    if args.model == 'HyperFuseNet': # ICASSPW 2023 中提出的模型
         net = HyperFuseNet(n=args.n, dropout_rate=args.dropout_rate)
-    elif args.model == 'HyperFuseNetv2': # Lightweight version: remove some layers, used for ablations
+    elif args.model == 'HyperFuseNetv2': # 轻量化版本：移除部分层，用于消融实验
         net = HyperFuseNetv2(n=args.n, dropout_rate=args.dropout_rate)
-    elif args.model == 'PHemoNet': # proposed in RTSI 2024, same as HyperFuseNetv2 but with PHM layers in encoders (aka HyperNet)
+    elif args.model == 'PHemoNet': # RTSI 2024 中提出的模型，与 HyperFuseNetv2 相同，但编码器使用 PHM 层（又称 HyperNet）
         net = PHemoNet(n=args.n, dropout_rate=args.dropout_rate, 
                        n_eye=args.n_eye, n_gsr=args.n_gsr, n_eeg=args.n_eeg, n_ecg=args.n_ecg)
-    elif args.model == 'HyperNetv2': # PHM in encoders but remove only one layer in each encoder (unlike HyperNet)
+    elif args.model == 'HyperNetv2': # 编码器使用 PHM 层，但每个编码器仅移除一层（与 HyperNet 不同）
         net = HyperNetv2(n=args.n, dropout_rate=args.dropout_rate, 
                        n_eye=args.n_eye, n_gsr=args.n_gsr, n_eeg=args.n_eeg, n_ecg=args.n_ecg)
-    elif args.model == 'H2': # model proposed in MLSP 2024 (aka ConvHyperNet)
+    elif args.model == 'H2': # MLSP 2024 中提出的模型（又称 ConvHyperNet）
         net = H2(n=args.n, dropout_rate=args.dropout_rate, 
                            n_eye=args.n_eye, n_gsr=args.n_gsr, n_eeg=args.n_eeg, n_ecg=args.n_ecg)
     elif args.model == 'CrossAttentionH2':
@@ -60,24 +69,25 @@ def main(args, n_workers):
             attention_dropout=args.attention_dropout,
             num_classes=num_classes,
         )
-    elif args.model == 'ConvNet': # Same as H2 but with conv in encoders, used for ablations
+    elif args.model == 'ConvNet': # 与 H2 相同，但编码器使用卷积，用于消融实验
         net = ConvNet(dropout_rate=args.dropout_rate)
     else:
         raise ValueError(f"Unknown model: {args.model}")
     
     wandb.init(project="MHyEEG")
     wandb.config.update(args, allow_val_change=True)
-    wandb.watch(net)
+    if args.wandb_watch:
+        wandb.watch(net)
     
-    # Count NN parameters
+    # 统计神经网络参数数量
     params = sum(p.numel() for p in net.parameters() if p.requires_grad)
     print(f'Number of parameters:', params)
     print()
     
-    # Initialize optimizers
+    # 初始化优化器
     optimizer = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=args.weight_decay, eps=1e-7)
     
-    # Train/Evaluate model
+    # 训练/评估模型
     trainer = Trainer(net, optimizer, epochs=args.epochs,
                       use_cuda=args.cuda, gpu_num=args.gpu_num,
                       checkpoint_folder=args.checkpoint_folder,
@@ -86,7 +96,12 @@ def main(args, n_workers):
                       num_classes=num_classes,
                       sample_weights=sample_weights,
                       es_mode=args.es_mode,
-                      patience=args.patience)
+                      patience=args.patience,
+                      amp=args.amp,
+                      amp_dtype=args.amp_dtype,
+                      fp32_finetune_epochs=args.fp32_finetune_epochs,
+                      allow_tf32=args.allow_tf32,
+                      wandb_log_interval=args.wandb_log_interval)
     
     trainer.train(train_loader, eval_loader, 
                   div_factor=args.div_factor, 
@@ -101,7 +116,7 @@ if __name__ == '__main__':
     parser.add_argument('--test_file_path', type=str, default='hci-tagging-database/torch_datasets/test_data_Arsl.pt', help='Path to test .pt file')
     parser.add_argument('--checkpoint_folder', type=str, default='checkpoints')
     parser.add_argument('--model', type=str, default='H2', help='Model to use (HyperFuseNet, PHemoNet, H2, CrossAttentionH2)')
-    parser.add_argument('--num_workers', default=1, help="Number of workers, 'max' for maximum number")
+    parser.add_argument('--num_workers', type=parse_num_workers, default=1, help="Number of workers, 'max' for maximum number")
     parser.add_argument('--cuda', type=bool, default=True)
     parser.add_argument('--gpu_num', type=int, default=0)
     parser.add_argument('--n', type=int, default=4, help="n parameter for PHM layers")
@@ -128,30 +143,38 @@ if __name__ == '__main__':
     # parser.add_argument('--lr', type=float, default=0.00002)
     parser.add_argument('--es_mode', type=str, default='max', help="mode for EarlyStopping, 'max' or 'min'")
     parser.add_argument('--patience', type=int, default=10, help="patience for EarlyStopping, 20 for HyperFuseNet and 10 for the others")
+    parser.add_argument('--amp', action=argparse.BooleanOptionalAction, default=False, help='Enable automatic mixed precision')
+    parser.add_argument('--amp_dtype', choices=['bfloat16', 'float16'], default='bfloat16')
+    parser.add_argument('--fp32_finetune_epochs', type=int, default=0, help='Use full FP32 for the final N epochs')
+    parser.add_argument('--allow_tf32', action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument('--deterministic', action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument('--cudnn_benchmark', action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument('--wandb_watch', action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument('--wandb_log_interval', type=int, default=1, help='Log step learning rate every N batches')
     parser.add_argument('--config', type=str, help='Path to YAML config file')
 
-    # Parse known args first to get the config path
+    # 首先解析已知参数以获取配置文件路径
     config_args, _ = parser.parse_known_args()
 
-    # Load YAML config and override defaults
+    # 加载 YAML 配置并覆盖默认值
     if config_args.config:
         with open(config_args.config, 'r') as f:
             config_dict = yaml.safe_load(f)
-            parser.set_defaults(**config_dict)  # Override parser defaults with config
+            parser.set_defaults(**config_dict)  # 使用配置覆盖解析器的默认值
     args = parser.parse_args()
 
     seed = args.seed
     n_workers = args.num_workers
 
     if n_workers == 'max':
-        n_workers = cpu_count()  # get the count of the number of CPUs in your system
+        n_workers = cpu_count()  # 获取系统中的 CPU 数量
     
-    # Set seed    
+    # 设置随机种子
     random.seed(seed)
     torch.manual_seed(seed)
     np.random.seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = args.deterministic
+    torch.backends.cudnn.benchmark = args.cudnn_benchmark
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)

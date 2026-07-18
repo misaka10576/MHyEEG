@@ -113,6 +113,36 @@ python main.py \
 | `attention_layers` | 交叉注意力层数 |
 | `attention_dropout` | 注意力分支的 Dropout |
 
+H2 与 CrossAttentionH2 默认使用两阶段精度训练：
+
+- Epoch 1～40：BF16 AMP + TF32，用于提高 RTX 5090 等新显卡的吞吐量。
+- Epoch 41～50：自动切换回完整 FP32，用于低学习率阶段的稳定微调。
+
+相关配置：
+
+```yaml
+amp: true
+amp_dtype: "bfloat16"
+fp32_finetune_epochs: 10
+allow_tf32: true
+cudnn_benchmark: true
+deterministic: false
+```
+
+如需恢复原始全 FP32、确定性训练，可在命令行覆盖：
+
+```bash
+python main.py \
+  --config configs/cross_attention_h2.yml \
+  --no-amp \
+  --no-allow_tf32 \
+  --no-cudnn_benchmark \
+  --deterministic \
+  --fp32_finetune_epochs 0 \
+  --train_file_path /path/to/train.pt \
+  --test_file_path /path/to/test.pt
+```
+
 获取注意力诊断信息：
 
 ```python

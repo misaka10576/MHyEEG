@@ -1,5 +1,6 @@
 from tqdm import tqdm
 from earlystopping import EarlyStopping
+from contextlib import nullcontext
 import torch
 import time
 import torch.nn as nn
@@ -16,7 +17,12 @@ class Trainer():
                       num_classes=3,
                       sample_weights=None,
                       es_mode='max',
-                      patience=10):
+                      patience=10,
+                      amp=False,
+                      amp_dtype='bfloat16',
+                      fp32_finetune_epochs=0,
+                      allow_tf32=False,
+                      wandb_log_interval=20):
 
         self.optimizer = optimizer
         self.epochs = epochs
@@ -30,6 +36,36 @@ class Trainer():
         self.num_classes = num_classes
         self.es_mode = es_mode
         self.patience = patience
+        self.use_amp = bool(amp and use_cuda)
+        self.amp_dtype_name = amp_dtype
+        self.fp32_finetune_epochs = fp32_finetune_epochs
+        self.allow_tf32 = bool(allow_tf32 and use_cuda)
+        self.wandb_log_interval = max(1, wandb_log_interval)
+        self._fast_precision_enabled = None
+
+        if self.fp32_finetune_epochs < 0 or self.fp32_finetune_epochs > self.epochs:
+            raise ValueError("fp32_finetune_epochs must be between 0 and epochs.")
+        if self.amp_dtype_name not in ('bfloat16', 'float16'):
+            raise ValueError("amp_dtype must be 'bfloat16' or 'float16'.")
+
+        self.amp_dtype = (
+            torch.bfloat16
+            if self.amp_dtype_name == 'bfloat16'
+            else torch.float16
+        )
+        if (
+            self.use_amp
+            and self.amp_dtype == torch.bfloat16
+            and not torch.cuda.is_bf16_supported()
+        ):
+            raise RuntimeError(
+                "The selected GPU does not support bfloat16 AMP. "
+                "Use amp_dtype=float16 or disable AMP."
+            )
+        self.scaler = torch.amp.GradScaler(
+            'cuda',
+            enabled=self.use_amp and self.amp_dtype == torch.float16,
+        )
 
         sample_weights = torch.tensor(sample_weights, dtype=torch.float32) if len(sample_weights)>0 else None
         self.criterion = nn.CrossEntropyLoss(weight=sample_weights)
@@ -44,6 +80,62 @@ class Trainer():
             
         else:
             self.net = net
+
+        fast_epochs = self.epochs - self.fp32_finetune_epochs
+        if self.use_amp:
+            print(
+                f"Precision schedule: epochs 1-{fast_epochs} use "
+                f"{self.amp_dtype_name} AMP"
+            )
+            if self.fp32_finetune_epochs > 0:
+                print(
+                    f"Precision schedule: epochs {fast_epochs + 1}-{self.epochs} "
+                    "use full FP32"
+                )
+        elif self.allow_tf32:
+            print(f"Precision schedule: epochs 1-{fast_epochs} allow TF32")
+        else:
+            print("Precision schedule: full FP32 for all epochs")
+
+    def _autocast_context(self, enabled):
+        if not enabled:
+            return nullcontext()
+        return torch.autocast(
+            device_type='cuda',
+            dtype=self.amp_dtype,
+        )
+
+    def _configure_precision_stage(self, fast_precision_enabled):
+        if self._fast_precision_enabled == fast_precision_enabled:
+            return
+
+        if not self.use_cuda:
+            self._fast_precision_enabled = fast_precision_enabled
+            print("Using CPU full precision")
+            return
+
+        tf32_enabled = self.allow_tf32 and fast_precision_enabled
+        torch.backends.cuda.matmul.allow_tf32 = tf32_enabled
+        torch.backends.cudnn.allow_tf32 = tf32_enabled
+        torch.set_float32_matmul_precision(
+            'high' if tf32_enabled else 'highest'
+        )
+        self._fast_precision_enabled = fast_precision_enabled
+
+        if fast_precision_enabled:
+            modes = []
+            if self.use_amp:
+                modes.append(f"{self.amp_dtype_name} AMP")
+            if tf32_enabled:
+                modes.append("TF32")
+            if modes:
+                print(f"Using accelerated precision: {', '.join(modes)}")
+            else:
+                print("Using full FP32 precision")
+        elif self.use_amp or self.allow_tf32:
+            print("Switched to full FP32 precision for final fine-tuning")
+        else:
+            print("Using full FP32 precision")
 
     def train(self, train_loader, eval_loader, **sched_kwargs):
         
@@ -62,6 +154,11 @@ class Trainer():
         best_loss = 0
         best_acc = 0
         for epoch in range(self.epochs):  # loop over the dataset multiple times
+            fast_precision_enabled = (
+                epoch < self.epochs - self.fp32_finetune_epochs
+            )
+            amp_enabled = self.use_amp and fast_precision_enabled
+            self._configure_precision_stage(fast_precision_enabled)
 
             start = time.time()
             running_loss_train = 0.0
@@ -77,34 +174,55 @@ class Trainer():
             
             self.net.train()  # switch net to training setting 
            
-            for inputs, labels in tqdm(train_loader, total=len(train_loader), desc='Train round', unit='batch', leave=False):  # for each batch
+            for batch_index, (inputs, labels) in enumerate(
+                tqdm(
+                    train_loader,
+                    total=len(train_loader),
+                    desc='Train round',
+                    unit='batch',
+                    leave=False,
+                )
+            ):  # for each batch
                 eye, gsr, eeg, ecg = inputs  # Tensors
 
                 if self.use_cuda:
-                    eye, gsr, eeg, ecg = eye.cuda('cuda:%i' %self.gpu_num), gsr.cuda('cuda:%i' %self.gpu_num), eeg.cuda('cuda:%i' %self.gpu_num), ecg.cuda('cuda:%i' %self.gpu_num), 
-                    labels = labels.cuda('cuda:%i' %self.gpu_num)
+                    device = 'cuda:%i' % self.gpu_num
+                    eye = eye.cuda(device, non_blocking=True)
+                    gsr = gsr.cuda(device, non_blocking=True)
+                    eeg = eeg.cuda(device, non_blocking=True)
+                    ecg = ecg.cuda(device, non_blocking=True)
+                    labels = labels.cuda(device, non_blocking=True)
                 
-                self.optimizer.zero_grad()  # clears grad for every parameter x in the optimizer, to not accumulate the gradients from multiple passes
+                self.optimizer.zero_grad(set_to_none=True)
 
-                outputs = self.net(eye, gsr, eeg, ecg)
-                loss = self.criterion(outputs, labels)
+                with self._autocast_context(amp_enabled):
+                    outputs = self.net(eye, gsr, eeg, ecg)
+                    loss = self.criterion(outputs, labels)
 
-                if self.l1_reg:
-                    print("Adding L1 regularization to A")
-                    # Add L1 regularization to A
-                    regularization_loss = 0.0
-                    for child in self.net.children():
-                        for layer in child.modules():
-                            if isinstance(layer, PHConv):
-                                for param in layer.a:
-                                    regularization_loss += torch.sum(abs(param))
-                    loss += 0.001 * regularization_loss
+                    if self.l1_reg:
+                        print("Adding L1 regularization to A")
+                        # Add L1 regularization to A
+                        regularization_loss = 0.0
+                        for child in self.net.children():
+                            for layer in child.modules():
+                                if isinstance(layer, PHConv):
+                                    for param in layer.a:
+                                        regularization_loss += torch.sum(abs(param))
+                        loss += 0.001 * regularization_loss
 
-
-                loss.backward()  # computes dloss/dx, for every parameter x which has requires_grad=True, and save it into x.grad
-                self.optimizer.step()  # updates the value of x using the computed x.grad value
+                if self.scaler.is_enabled():
+                    self.scaler.scale(loss).backward()
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                else:
+                    loss.backward()
+                    self.optimizer.step()
                 scheduler.step()
-                wandb.log({"lr_step": scheduler.get_last_lr()[0]})
+                if (
+                    batch_index % self.wandb_log_interval == 0
+                    or batch_index == len(train_loader) - 1
+                ):
+                    wandb.log({"lr_step": scheduler.get_last_lr()[0]})
 
                 running_loss_train += loss.item()  # save current loss to compute later a mean
 
@@ -131,11 +249,16 @@ class Trainer():
                     eye, gsr, eeg, ecg = inputs  # Tensors
 
                     if self.use_cuda:
-                        eye, gsr, eeg, ecg = eye.cuda('cuda:%i' %self.gpu_num), gsr.cuda('cuda:%i' %self.gpu_num), eeg.cuda('cuda:%i' %self.gpu_num), ecg.cuda('cuda:%i' %self.gpu_num), 
-                        labels = labels.cuda('cuda:%i' %self.gpu_num)
-                        
-                    eval_outputs = self.net(eye, gsr, eeg, ecg)
-                    eval_loss = self.val_criterion(eval_outputs, labels)
+                        device = 'cuda:%i' % self.gpu_num
+                        eye = eye.cuda(device, non_blocking=True)
+                        gsr = gsr.cuda(device, non_blocking=True)
+                        eeg = eeg.cuda(device, non_blocking=True)
+                        ecg = ecg.cuda(device, non_blocking=True)
+                        labels = labels.cuda(device, non_blocking=True)
+
+                    with self._autocast_context(amp_enabled):
+                        eval_outputs = self.net(eye, gsr, eeg, ecg)
+                        eval_loss = self.val_criterion(eval_outputs, labels)
                     running_loss_eval += eval_loss.item()  # save current loss to compute later a mean
 
                     _, predicted = torch.max(eval_outputs.data, 1)  # compute max logits, along dim 1, return (max, id_max==label)
@@ -152,7 +275,8 @@ class Trainer():
             # Log metrics
             wandb.log({"train loss": running_loss_train/len(train_loader), "train acc": train_acc, "train f1": train_f1,
                            "val loss": running_loss_eval/len(eval_loader), "val acc": acc, "val f1": f1, "lr": scheduler.get_last_lr()[0],
-                           "epoch": epoch+1})
+                           "epoch": epoch+1, "amp enabled": int(amp_enabled),
+                           "tf32 enabled": int(self.allow_tf32 and fast_precision_enabled)})
 
             print('Epoch {:03d}: Loss {:.4f}, Accuracy {:.4f}, F1 score {:.4f} || Val Loss {:.4f}, Val Accuracy {:.4f}, Val F1 score {:.4f}  [Time: {:.4f}]'
                   .format(epoch + 1, running_loss_train/len(train_loader), train_acc, train_f1, running_loss_eval/len(eval_loader), acc, f1, end-start))
