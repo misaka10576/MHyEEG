@@ -1,6 +1,7 @@
 from tqdm import tqdm
 from earlystopping import EarlyStopping
 from contextlib import nullcontext
+from collections.abc import Mapping
 import torch
 import time
 import torch.nn as nn
@@ -105,6 +106,29 @@ class Trainer():
             dtype=self.amp_dtype,
         )
 
+    def _move_to_device(self, value, device):
+        """Move nested multimodal batches to GPU without changing structure."""
+        if isinstance(value, torch.Tensor):
+            return value.cuda(device, non_blocking=True)
+        if isinstance(value, Mapping):
+            return {
+                key: self._move_to_device(item, device)
+                for key, item in value.items()
+            }
+        if isinstance(value, tuple):
+            return tuple(self._move_to_device(item, device) for item in value)
+        if isinstance(value, list):
+            return [self._move_to_device(item, device) for item in value]
+        raise TypeError(f"Unsupported batch value type: {type(value).__name__}")
+
+    def _forward_inputs(self, inputs):
+        """Support legacy modality lists and named modality dictionaries."""
+        if isinstance(inputs, Mapping):
+            return self.net(**inputs)
+        if isinstance(inputs, (tuple, list)):
+            return self.net(*inputs)
+        return self.net(inputs)
+
     def _configure_precision_stage(self, fast_precision_enabled):
         if self._fast_precision_enabled == fast_precision_enabled:
             return
@@ -143,7 +167,12 @@ class Trainer():
         run_name = wandb.run.name
 
         # initialize the early_stopping object
-        early_stopping = EarlyStopping(patience=self.patience, path=self.checkpoints_folder + "/best_" + run_name + ".pt", mode=self.es_mode)
+        checkpoint_path = self.checkpoints_folder + "/best_" + run_name + ".pt"
+        early_stopping = EarlyStopping(
+            patience=self.patience,
+            path=checkpoint_path,
+            mode=self.es_mode,
+        )
 
         scheduler = sched.OneCycleLR(self.optimizer, epochs=self.epochs, steps_per_epoch=len(train_loader), 
                                          anneal_strategy='linear', cycle_momentum=True, base_momentum=self.min_mom, max_momentum=self.max_mom, 
@@ -183,20 +212,15 @@ class Trainer():
                     leave=False,
                 )
             ):  # for each batch
-                eye, gsr, eeg, ecg = inputs  # Tensors
-
                 if self.use_cuda:
                     device = 'cuda:%i' % self.gpu_num
-                    eye = eye.cuda(device, non_blocking=True)
-                    gsr = gsr.cuda(device, non_blocking=True)
-                    eeg = eeg.cuda(device, non_blocking=True)
-                    ecg = ecg.cuda(device, non_blocking=True)
+                    inputs = self._move_to_device(inputs, device)
                     labels = labels.cuda(device, non_blocking=True)
                 
                 self.optimizer.zero_grad(set_to_none=True)
 
                 with self._autocast_context(amp_enabled):
-                    outputs = self.net(eye, gsr, eeg, ecg)
+                    outputs = self._forward_inputs(inputs)
                     loss = self.criterion(outputs, labels)
 
                     if self.l1_reg:
@@ -246,18 +270,13 @@ class Trainer():
             # since we're not training, we don't need to calculate the gradients for our outputs
             with torch.no_grad():
                  for inputs, labels in tqdm(eval_loader, total=len(eval_loader), desc='Val round', unit='batch', leave=False):   # for each batch
-                    eye, gsr, eeg, ecg = inputs  # Tensors
-
                     if self.use_cuda:
                         device = 'cuda:%i' % self.gpu_num
-                        eye = eye.cuda(device, non_blocking=True)
-                        gsr = gsr.cuda(device, non_blocking=True)
-                        eeg = eeg.cuda(device, non_blocking=True)
-                        ecg = ecg.cuda(device, non_blocking=True)
+                        inputs = self._move_to_device(inputs, device)
                         labels = labels.cuda(device, non_blocking=True)
 
                     with self._autocast_context(amp_enabled):
-                        eval_outputs = self.net(eye, gsr, eeg, ecg)
+                        eval_outputs = self._forward_inputs(inputs)
                         eval_loss = self.val_criterion(eval_outputs, labels)
                     running_loss_eval += eval_loss.item()  # save current loss to compute later a mean
 
@@ -300,3 +319,69 @@ class Trainer():
         wandb.log({"Best val loss": best_loss})
         wandb.log({"Best val acc": best_acc})
         wandb.log({"Best val f1": best_f1})
+        return {
+            "checkpoint_path": checkpoint_path,
+            "best_val_loss": best_loss,
+            "best_val_acc": best_acc,
+            "best_val_f1": best_f1,
+        }
+
+    def evaluate(self, data_loader, checkpoint_path=None, split="test"):
+        """Evaluate named or legacy multimodal inputs, optionally using a checkpoint."""
+        if checkpoint_path is not None:
+            if self.use_cuda:
+                map_location = "cuda:%i" % self.gpu_num
+            else:
+                map_location = "cpu"
+            state_dict = torch.load(
+                checkpoint_path,
+                map_location=map_location,
+                weights_only=True,
+            )
+            self.net.load_state_dict(state_dict)
+
+        self.net.eval()
+        running_loss = 0.0
+        total = 0
+        correct = 0
+        predictions = []
+        targets = []
+        with torch.no_grad():
+            for inputs, labels in tqdm(
+                data_loader,
+                total=len(data_loader),
+                desc=f"{split.capitalize()} round",
+                unit="batch",
+                leave=False,
+            ):
+                if self.use_cuda:
+                    device = "cuda:%i" % self.gpu_num
+                    inputs = self._move_to_device(inputs, device)
+                    labels = labels.cuda(device, non_blocking=True)
+
+                outputs = self._forward_inputs(inputs)
+                loss = self.val_criterion(outputs, labels)
+                running_loss += loss.item()
+                predicted = outputs.argmax(dim=1)
+                total += labels.size(0)
+                correct += (predicted == labels).sum().item()
+                predictions.append(predicted.cpu())
+                targets.append(labels.cpu())
+
+        predictions = torch.cat(predictions)
+        targets = torch.cat(targets)
+        loss = running_loss / len(data_loader)
+        accuracy = 100 * correct / total
+        f1 = f1_score(targets, predictions, average="macro")
+        print(
+            f"{split.capitalize()}: Loss {loss:.4f}, Accuracy {accuracy:.4f}, "
+            f"F1 score {f1:.4f}"
+        )
+        wandb.log(
+            {
+                f"{split} loss": loss,
+                f"{split} acc": accuracy,
+                f"{split} f1": f1,
+            }
+        )
+        return {"loss": loss, "accuracy": accuracy, "f1": f1}

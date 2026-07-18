@@ -1,0 +1,39 @@
+# Subject-independent SEED-IV attention ablation without fuzzy guidance
+dataset_root: "SEED_IV"
+eeg_feature_kind: "de_LDS"
+fold: 0
+seed: 0
+
+model: "SeedIVAttention"
+attention_dim: 64
+attention_heads: 4
+attention_layers: 1
+attention_ffn_dim: 128
+attention_dropout: 0.2
+
+epochs: 100
+patience: 10
+train_batch_size: 256
+test_batch_size: 512
+num_workers: 4
+weight_decay: 0.0001
+
+max_lr: 0.001
+min_mom: 0.85
+max_mom: 0.95
+div_factor: 10
+final_div_factor: 100
+pct_start: 0.3
+
+amp: true
+amp_dtype: "bfloat16"
+fp32_finetune_epochs: 10
+allow_tf32: true
+cudnn_benchmark: true
+deterministic: false
+wandb_watch: false
+wandb_log_interval: 20
+
+checkpoint_folder: "checkpoints/seed_iv_attention_fold0"
+wandb_project: "MHyEEG-SEED-IV"
+wandb_mode: "online"

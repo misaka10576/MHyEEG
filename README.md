@@ -82,6 +82,72 @@ python sweep.py
 
 实验将通过 [Weights & Biases](https://wandb.ai/) 进行记录。
 
+### SEED-IV 双模态研究
+
+SEED-IV 使用官方对齐的 4 秒特征窗口：
+
+- EEG 平滑 DE 特征：`[62, 5]`，对应 62 个通道和 5 个频带。
+- Eye 特征：`[31]`。
+- 标签：neutral、sad、fear、happy。
+
+将数据集放在仓库根目录的 `SEED_IV/`，目录中至少需要：
+
+```text
+SEED_IV/
+├── eeg_feature_smooth/
+│   ├── 1/
+│   ├── 2/
+│   └── 3/
+└── eye_feature_smooth/
+    ├── 1/
+    ├── 2/
+    └── 3/
+```
+
+运行 EEG + Eye 拼接基线：
+
+```bash
+conda activate mhyeeg
+python main_seed_iv.py --config configs/seed_iv_concat.yml
+```
+
+可通过命令行运行同一数据划分下的单模态基线：
+
+```bash
+python main_seed_iv.py \
+  --config configs/seed_iv_concat.yml \
+  --model SeedIVEEG \
+  --checkpoint_folder checkpoints/seed_iv_eeg_fold0
+
+python main_seed_iv.py \
+  --config configs/seed_iv_concat.yml \
+  --model SeedIVEye \
+  --checkpoint_folder checkpoints/seed_iv_eye_fold0
+```
+
+项目采用 5 折受试者独立划分。每折包含 9 名训练受试者、3 名验证受试者和
+3 名测试受试者；特征标准化仅使用训练受试者，避免窗口级和受试者级泄漏。
+使用 `--fold 0` 至 `--fold 4` 切换折。训练结束后会自动载入验证集
+Macro-F1 最优的 checkpoint，并报告未见测试受试者上的 Accuracy 和 Macro-F1。
+
+普通多模态注意力消融：
+
+```bash
+python main_seed_iv.py --config configs/seed_iv_attention.yml
+```
+
+区间二型模糊可靠性引导注意力：
+
+```bash
+python main_seed_iv.py \
+  --config configs/seed_iv_it2_fuzzy_attention.yml
+```
+
+注意力模型将 EEG 表示为 5 个频带 token，将眼动表示为瞳孔、离散度、注视、
+扫视和事件统计 5 个语义 token。完整模型通过区间二型 Gaussian 模糊规则
+估计每个 token 的可靠性及 FOU 不确定性，并将可靠性作为 attention logits
+的先验。普通注意力配置关闭模糊模块，用于隔离 IT2 模糊引导的贡献。
+
 ### 跨模态交叉注意力 H2
 
 `CrossAttentionH2` 保留 H2 的四路编码器和 PHM 分类头，将原有拼接融合替换为模态级交叉注意力。每个查询模态只能关注另外三个模态，不会读取自身特征。
