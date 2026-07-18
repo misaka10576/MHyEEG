@@ -23,7 +23,9 @@ class Trainer():
                       amp_dtype='bfloat16',
                       fp32_finetune_epochs=0,
                       allow_tf32=False,
-                      wandb_log_interval=20):
+                      wandb_log_interval=20,
+                      label_smoothing=0.0,
+                      max_grad_norm=None):
 
         self.optimizer = optimizer
         self.epochs = epochs
@@ -31,7 +33,7 @@ class Trainer():
         self.gpu_num = gpu_num
         self.checkpoints_folder = checkpoint_folder
         # self.max_lr = max_lr
-        self.min_mom = min_mom,
+        self.min_mom = min_mom
         self.max_mom = max_mom
         self.l1_reg = l1_reg
         self.num_classes = num_classes
@@ -42,12 +44,20 @@ class Trainer():
         self.fp32_finetune_epochs = fp32_finetune_epochs
         self.allow_tf32 = bool(allow_tf32 and use_cuda)
         self.wandb_log_interval = max(1, wandb_log_interval)
+        self.label_smoothing = float(label_smoothing)
+        self.max_grad_norm = (
+            None if max_grad_norm is None else float(max_grad_norm)
+        )
         self._fast_precision_enabled = None
 
         if self.fp32_finetune_epochs < 0 or self.fp32_finetune_epochs > self.epochs:
             raise ValueError("fp32_finetune_epochs must be between 0 and epochs.")
         if self.amp_dtype_name not in ('bfloat16', 'float16'):
             raise ValueError("amp_dtype must be 'bfloat16' or 'float16'.")
+        if not 0.0 <= self.label_smoothing < 1.0:
+            raise ValueError("label_smoothing must be in [0, 1).")
+        if self.max_grad_norm is not None and self.max_grad_norm <= 0:
+            raise ValueError("max_grad_norm must be positive or None.")
 
         self.amp_dtype = (
             torch.bfloat16
@@ -68,8 +78,15 @@ class Trainer():
             enabled=self.use_amp and self.amp_dtype == torch.float16,
         )
 
-        sample_weights = torch.tensor(sample_weights, dtype=torch.float32) if len(sample_weights)>0 else None
-        self.criterion = nn.CrossEntropyLoss(weight=sample_weights)
+        sample_weights = (
+            torch.as_tensor(sample_weights, dtype=torch.float32)
+            if sample_weights is not None and len(sample_weights) > 0
+            else None
+        )
+        self.criterion = nn.CrossEntropyLoss(
+            weight=sample_weights,
+            label_smoothing=self.label_smoothing,
+        )
         self.val_criterion = nn.CrossEntropyLoss()
         
         if self.use_cuda:
@@ -161,7 +178,7 @@ class Trainer():
         else:
             print("Using full FP32 precision")
 
-    def train(self, train_loader, eval_loader, **sched_kwargs):
+    def train(self, train_loader, validation_loader, **sched_kwargs):
         
         # name for checkpoint
         run_name = wandb.run.name
@@ -179,8 +196,9 @@ class Trainer():
                                          three_phase=True, **sched_kwargs)
         # scheduler = sched.StepLR(self.optimizer, step_size=5, gamma=0.1)
         
-        best_f1 = 0
-        best_loss = 0
+        best_f1 = float('-inf')
+        validation_loss_at_best_f1 = float('inf')
+        minimum_validation_loss = float('inf')
         best_acc = 0
         for epoch in range(self.epochs):  # loop over the dataset multiple times
             fast_precision_enabled = (
@@ -191,15 +209,15 @@ class Trainer():
 
             start = time.time()
             running_loss_train = 0.0
-            running_loss_eval = 0.0
+            running_loss_validation = 0.0
             train_total = 0.0
             train_correct = 0.0
-            train_y_pred = torch.empty(0)
-            train_y_true = torch.empty(0)
+            train_predictions = []
+            train_targets = []
             total = 0.0
             correct = 0.0
-            y_pred = torch.empty(0)
-            y_true = torch.empty(0)
+            validation_predictions = []
+            validation_targets = []
             
             self.net.train()  # switch net to training setting 
            
@@ -207,7 +225,7 @@ class Trainer():
                 tqdm(
                     train_loader,
                     total=len(train_loader),
-                    desc='Train round',
+                    desc=f'Train {epoch + 1:03d}/{self.epochs:03d}',
                     unit='batch',
                     leave=False,
                 )
@@ -236,10 +254,21 @@ class Trainer():
 
                 if self.scaler.is_enabled():
                     self.scaler.scale(loss).backward()
+                    self.scaler.unscale_(self.optimizer)
+                    if self.max_grad_norm is not None:
+                        torch.nn.utils.clip_grad_norm_(
+                            self.net.parameters(),
+                            self.max_grad_norm,
+                        )
                     self.scaler.step(self.optimizer)
                     self.scaler.update()
                 else:
                     loss.backward()
+                    if self.max_grad_norm is not None:
+                        torch.nn.utils.clip_grad_norm_(
+                            self.net.parameters(),
+                            self.max_grad_norm,
+                        )
                     self.optimizer.step()
                 scheduler.step()
                 if (
@@ -248,20 +277,25 @@ class Trainer():
                 ):
                     wandb.log({"lr_step": scheduler.get_last_lr()[0]})
 
-                running_loss_train += loss.item()  # save current loss to compute later a mean
+                batch_size = labels.size(0)
+                running_loss_train += loss.item() * batch_size
 
                 _, predicted = torch.max(outputs.data, 1)  # compute max logits, along dim 1, return (max, id_max==label)
                 
-                train_total += labels.size(0)  # how much samples seen so far
+                train_total += batch_size  # how much samples seen so far
                 train_correct += (predicted == labels).sum().item()  # how much corrected seen so far
 
-                train_y_pred = torch.cat((train_y_pred, predicted.view(predicted.shape[0]).cpu()))
-                train_y_true = torch.cat((train_y_true, labels.view(labels.shape[0]).cpu()))
-                
-            end = time.time()
+                train_predictions.append(predicted.cpu())
+                train_targets.append(labels.cpu())
 
             train_acc = 100*train_correct/train_total
-            train_f1 = f1_score(train_y_true, train_y_pred, average='macro')
+            train_f1 = f1_score(
+                torch.cat(train_targets),
+                torch.cat(train_predictions),
+                average='macro',
+                zero_division=0,
+            )
+            train_loss = running_loss_train / train_total
             
            
             self.net.eval()  # switch net to evaluate setting 
@@ -269,7 +303,13 @@ class Trainer():
                 
             # since we're not training, we don't need to calculate the gradients for our outputs
             with torch.no_grad():
-                 for inputs, labels in tqdm(eval_loader, total=len(eval_loader), desc='Val round', unit='batch', leave=False):   # for each batch
+                 for inputs, labels in tqdm(
+                     validation_loader,
+                     total=len(validation_loader),
+                     desc=f'Validation {epoch + 1:03d}/{self.epochs:03d}',
+                     unit='batch',
+                     leave=False,
+                 ):
                     if self.use_cuda:
                         device = 'cuda:%i' % self.gpu_num
                         inputs = self._move_to_device(inputs, device)
@@ -278,50 +318,64 @@ class Trainer():
                     with self._autocast_context(amp_enabled):
                         eval_outputs = self._forward_inputs(inputs)
                         eval_loss = self.val_criterion(eval_outputs, labels)
-                    running_loss_eval += eval_loss.item()  # save current loss to compute later a mean
+                    batch_size = labels.size(0)
+                    running_loss_validation += eval_loss.item() * batch_size
 
                     _, predicted = torch.max(eval_outputs.data, 1)  # compute max logits, along dim 1, return (max, id_max==label)
                     
-                    total += labels.size(0)  # how much samples seen so far
+                    total += batch_size  # how much samples seen so far
                     correct += (predicted == labels).sum().item()  # how much corrected seen so far
 
-                    y_pred = torch.cat((y_pred, predicted.view(predicted.shape[0]).cpu()))
-                    y_true = torch.cat((y_true, labels.view(labels.shape[0]).cpu()))
+                    validation_predictions.append(predicted.cpu())
+                    validation_targets.append(labels.cpu())
 
             acc = 100*correct/total
-            f1 = f1_score(y_true, y_pred, average='macro')
+            f1 = f1_score(
+                torch.cat(validation_targets),
+                torch.cat(validation_predictions),
+                average='macro',
+                zero_division=0,
+            )
+            validation_loss = running_loss_validation / total
+            minimum_validation_loss = min(
+                minimum_validation_loss,
+                validation_loss,
+            )
+            end = time.time()
 
             # Log metrics
-            wandb.log({"train loss": running_loss_train/len(train_loader), "train acc": train_acc, "train f1": train_f1,
-                           "val loss": running_loss_eval/len(eval_loader), "val acc": acc, "val f1": f1, "lr": scheduler.get_last_lr()[0],
+            wandb.log({"train loss": train_loss, "train acc": train_acc, "train f1": train_f1,
+                           "val loss": validation_loss, "val acc": acc, "val f1": f1, "lr": scheduler.get_last_lr()[0],
                            "epoch": epoch+1, "amp enabled": int(amp_enabled),
                            "tf32 enabled": int(self.allow_tf32 and fast_precision_enabled)})
 
             print('Epoch {:03d}: Loss {:.4f}, Accuracy {:.4f}, F1 score {:.4f} || Val Loss {:.4f}, Val Accuracy {:.4f}, Val F1 score {:.4f}  [Time: {:.4f}]'
-                  .format(epoch + 1, running_loss_train/len(train_loader), train_acc, train_f1, running_loss_eval/len(eval_loader), acc, f1, end-start))
+                  .format(epoch + 1, train_loss, train_acc, train_f1, validation_loss, acc, f1, end-start))
             
             if f1 > best_f1:
                 best_f1 = f1
-                best_loss = running_loss_eval/len(eval_loader)
+                validation_loss_at_best_f1 = validation_loss
                 best_acc = acc
 
             # Early stopping
             if self.es_mode == 'max':
                 early_stopping(f1, self.net)
             else:
-                early_stopping(running_loss_eval/len(eval_loader), self.net)
+                early_stopping(validation_loss, self.net)
             if early_stopping.early_stop:
                 print(f"Early stopping")
                 break
             
         print(f'Finished Training')
 
-        wandb.log({"Best val loss": best_loss})
+        wandb.log({"Val loss at best f1": validation_loss_at_best_f1})
+        wandb.log({"Minimum val loss": minimum_validation_loss})
         wandb.log({"Best val acc": best_acc})
         wandb.log({"Best val f1": best_f1})
         return {
             "checkpoint_path": checkpoint_path,
-            "best_val_loss": best_loss,
+            "best_val_loss": validation_loss_at_best_f1,
+            "minimum_val_loss": minimum_validation_loss,
             "best_val_acc": best_acc,
             "best_val_f1": best_f1,
         }
@@ -361,18 +415,24 @@ class Trainer():
 
                 outputs = self._forward_inputs(inputs)
                 loss = self.val_criterion(outputs, labels)
-                running_loss += loss.item()
+                batch_size = labels.size(0)
+                running_loss += loss.item() * batch_size
                 predicted = outputs.argmax(dim=1)
-                total += labels.size(0)
+                total += batch_size
                 correct += (predicted == labels).sum().item()
                 predictions.append(predicted.cpu())
                 targets.append(labels.cpu())
 
         predictions = torch.cat(predictions)
         targets = torch.cat(targets)
-        loss = running_loss / len(data_loader)
+        loss = running_loss / total
         accuracy = 100 * correct / total
-        f1 = f1_score(targets, predictions, average="macro")
+        f1 = f1_score(
+            targets,
+            predictions,
+            average="macro",
+            zero_division=0,
+        )
         print(
             f"{split.capitalize()}: Loss {loss:.4f}, Accuracy {accuracy:.4f}, "
             f"F1 score {f1:.4f}"

@@ -9,21 +9,23 @@ attention_dim: 64
 attention_heads: 4
 attention_layers: 1
 attention_ffn_dim: 128
-attention_dropout: 0.2
+attention_dropout: 0.3
 
-epochs: 100
+epochs: 50
 patience: 10
-train_batch_size: 256
-test_batch_size: 512
+train_batch_size: 64
+test_batch_size: 128
 num_workers: 4
-weight_decay: 0.0001
+weight_decay: 0.001
+label_smoothing: 0.05
+max_grad_norm: 1.0
 
-max_lr: 0.001
+max_lr: 0.0003
 min_mom: 0.85
 max_mom: 0.95
 div_factor: 10
 final_div_factor: 100
-pct_start: 0.3
+pct_start: 0.1
 
 amp: false
 amp_dtype: "bfloat16"

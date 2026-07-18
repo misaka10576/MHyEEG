@@ -125,10 +125,11 @@ python main_seed_iv.py \
   --checkpoint_folder checkpoints/seed_iv_eye_fold0
 ```
 
-项目采用 5 折受试者独立划分。每折包含 9 名训练受试者、3 名验证受试者和
-3 名测试受试者；特征标准化仅使用训练受试者，避免窗口级和受试者级泄漏。
-使用 `--fold 0` 至 `--fold 4` 切换折。训练结束后会自动载入验证集
-Macro-F1 最优的 checkpoint，并报告未见测试受试者上的 Accuracy 和 Macro-F1。
+项目采用 15 折 LOSO 受试者独立划分。每折留 1 名受试者测试、轮换下一名
+受试者验证，其余 13 名受试者训练；特征标准化仅使用训练受试者，避免窗口级
+和受试者级泄漏。使用 `--fold 0` 至 `--fold 14` 切换折。训练结束后会自动
+载入验证集 Macro-F1 最优的 checkpoint，并报告未见测试受试者上的 Accuracy
+和 Macro-F1。
 
 普通多模态注意力消融：
 
@@ -142,6 +143,29 @@ python main_seed_iv.py --config configs/seed_iv_attention.yml
 python main_seed_iv.py \
   --config configs/seed_iv_it2_fuzzy_attention.yml
 ```
+
+先运行单折检查数据与训练曲线：
+
+```bash
+python main_seed_iv.py \
+  --config configs/seed_iv_it2_fuzzy_attention.yml \
+  --fold 0
+```
+
+确认无误后自动运行全部 15 折 LOSO 并汇总受试者级均值和标准差：
+
+```bash
+python main_seed_iv.py \
+  --config configs/seed_iv_it2_fuzzy_attention.yml \
+  --all_folds \
+  --loso_output_dir checkpoints/seed_iv_loso
+```
+
+每一折使用独立的 checkpoint 和 W&B run。逐折结果以及 Accuracy、Macro-F1
+的均值和样本标准差会写入
+`checkpoints/seed_iv_loso/<model>_seed<seed>/loso_summary.json`。默认训练设置为
+50 epochs、训练 batch 64、验证/测试 batch 128、最大学习率 `3e-4`、5% label
+smoothing、梯度范数裁剪 1.0，并继续按验证集 Macro-F1 选择 checkpoint。
 
 注意力模型将 EEG 表示为 5 个频带 token，将眼动表示为瞳孔、离散度、注视、
 扫视和事件统计 5 个语义 token。完整模型通过区间二型 Gaussian 模糊规则

@@ -16,8 +16,10 @@ from models.seed_iv_fuzzy_attention import (
 
 
 class SeedIVDataTests(unittest.TestCase):
-    def test_subject_folds_are_disjoint_and_complete(self):
-        for fold in range(5):
+    def test_loso_subject_folds_are_disjoint_complete_and_balanced(self):
+        test_subjects = []
+        validation_subjects = []
+        for fold in range(15):
             split = get_subject_split(fold)
             train = set(split["train"])
             validation = set(split["validation"])
@@ -26,7 +28,12 @@ class SeedIVDataTests(unittest.TestCase):
             self.assertFalse(train & test)
             self.assertFalse(validation & test)
             self.assertEqual(train | validation | test, set(range(1, 16)))
-            self.assertEqual((len(train), len(validation), len(test)), (9, 3, 3))
+            self.assertEqual((len(train), len(validation), len(test)), (13, 1, 1))
+            test_subjects.extend(test)
+            validation_subjects.extend(validation)
+
+        self.assertEqual(sorted(test_subjects), list(range(1, 16)))
+        self.assertEqual(sorted(validation_subjects), list(range(1, 16)))
 
     def test_standardization_uses_training_subjects_and_imputes_nan(self):
         eeg = np.arange(4 * 62 * 5, dtype=np.float32).reshape(4, 62, 5)

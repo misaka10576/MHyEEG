@@ -21,13 +21,7 @@ EEG_FEATURE_KINDS = (
     "psd_LDS",
     "psd_movingAve",
 )
-SUBJECT_FOLDS = (
-    (1, 2, 3),
-    (4, 5, 6),
-    (7, 8, 9),
-    (10, 11, 12),
-    (13, 14, 15),
-)
+SUBJECT_IDS = tuple(range(1, 16))
 
 
 @dataclass(frozen=True)
@@ -41,15 +35,15 @@ class SeedIVArrays:
 
 
 def get_subject_split(fold: int) -> Dict[str, Tuple[int, ...]]:
-    """Return a deterministic 9/3/3 train/validation/test subject split."""
-    if not 0 <= fold < len(SUBJECT_FOLDS):
-        raise ValueError(f"fold must be between 0 and {len(SUBJECT_FOLDS) - 1}.")
+    """Return a deterministic LOSO 13/1/1 train/validation/test split."""
+    if not 0 <= fold < len(SUBJECT_IDS):
+        raise ValueError(f"fold must be between 0 and {len(SUBJECT_IDS) - 1}.")
 
-    test_subjects = SUBJECT_FOLDS[fold]
-    validation_subjects = SUBJECT_FOLDS[(fold + 1) % len(SUBJECT_FOLDS)]
+    test_subjects = (SUBJECT_IDS[fold],)
+    validation_subjects = (SUBJECT_IDS[(fold + 1) % len(SUBJECT_IDS)],)
     excluded = set(test_subjects + validation_subjects)
     train_subjects = tuple(
-        subject for subject in range(1, 16) if subject not in excluded
+        subject for subject in SUBJECT_IDS if subject not in excluded
     )
     return {
         "train": train_subjects,
