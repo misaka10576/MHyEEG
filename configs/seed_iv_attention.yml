@@ -25,12 +25,12 @@ div_factor: 10
 final_div_factor: 100
 pct_start: 0.3
 
-amp: true
+amp: false
 amp_dtype: "bfloat16"
-fp32_finetune_epochs: 10
-allow_tf32: true
-cudnn_benchmark: true
-deterministic: false
+fp32_finetune_epochs: 0
+allow_tf32: false
+cudnn_benchmark: false
+deterministic: true
 wandb_watch: false
 wandb_log_interval: 20
 

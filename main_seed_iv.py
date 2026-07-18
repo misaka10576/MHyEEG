@@ -71,27 +71,27 @@ def build_parser():
     parser.add_argument("--checkpoint_folder", type=str, default="checkpoints/seed_iv")
     parser.add_argument("--cuda", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--gpu_num", type=int, default=0)
-    parser.add_argument("--amp", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--amp", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument(
         "--amp_dtype",
         choices=("bfloat16", "float16"),
         default="bfloat16",
     )
-    parser.add_argument("--fp32_finetune_epochs", type=int, default=10)
+    parser.add_argument("--fp32_finetune_epochs", type=int, default=0)
     parser.add_argument(
         "--allow_tf32",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-    )
-    parser.add_argument(
-        "--deterministic",
         action=argparse.BooleanOptionalAction,
         default=False,
     )
     parser.add_argument(
-        "--cudnn_benchmark",
+        "--deterministic",
         action=argparse.BooleanOptionalAction,
         default=True,
+    )
+    parser.add_argument(
+        "--cudnn_benchmark",
+        action=argparse.BooleanOptionalAction,
+        default=False,
     )
     parser.add_argument(
         "--wandb_watch",
@@ -120,6 +120,8 @@ def parse_args():
 
 
 def set_reproducibility(args):
+    if args.deterministic:
+        os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -127,6 +129,7 @@ def set_reproducibility(args):
         torch.cuda.manual_seed_all(args.seed)
     torch.backends.cudnn.deterministic = args.deterministic
     torch.backends.cudnn.benchmark = args.cudnn_benchmark
+    torch.use_deterministic_algorithms(args.deterministic, warn_only=True)
 
 
 def main(args):

@@ -13,13 +13,13 @@ train_batch_size: 64
 test_batch_size: 32
 num_workers: 4
 
-# Performance: fast mixed precision first, stable FP32 fine-tuning last
-amp: true
+# Precision: stable and reproducible full FP32 for all epochs
+amp: false
 amp_dtype: "bfloat16"
-fp32_finetune_epochs: 10
-allow_tf32: true
-cudnn_benchmark: true
-deterministic: false
+fp32_finetune_epochs: 0
+allow_tf32: false
+cudnn_benchmark: false
+deterministic: true
 wandb_watch: false
 wandb_log_interval: 20
 

@@ -170,11 +170,14 @@ if __name__ == '__main__':
         n_workers = cpu_count()  # 获取系统中的 CPU 数量
     
     # 设置随机种子
+    if args.deterministic:
+        os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     random.seed(seed)
     torch.manual_seed(seed)
     np.random.seed(seed)
     torch.backends.cudnn.deterministic = args.deterministic
     torch.backends.cudnn.benchmark = args.cudnn_benchmark
+    torch.use_deterministic_algorithms(args.deterministic, warn_only=True)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
