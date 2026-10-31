@@ -1,0 +1,19 @@
+{
+  "completed_models": [
+    "EEG MLP",
+    "DGCNN",
+    "MAET-Concat",
+    "Eye MLP",
+    "Concat MLP",
+    "Attention",
+    "IT2 Fuzzy"
+  ],
+  "generated_files": [
+    "paper/figures/main_results.png",
+    "paper/figures/main_results.svg",
+    "paper/figures/subject_macro_f1.png",
+    "paper/figures/subject_macro_f1.svg",
+    "paper/figures/normalized_confusion_matrices.png",
+    "paper/figures/normalized_confusion_matrices.svg"
+  ]
+}

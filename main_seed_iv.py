@@ -13,8 +13,19 @@ import numpy as np
 import torch
 import wandb
 import yaml
+from sklearn.metrics import (
+    accuracy_score,
+    confusion_matrix,
+    f1_score,
+    precision_recall_fscore_support,
+)
 
-from data.seed_iv import SUBJECT_IDS, build_seed_iv_loaders, get_subject_split
+from data.seed_iv import (
+    CLASS_NAMES,
+    SUBJECT_IDS,
+    build_seed_iv_loaders,
+    get_subject_split,
+)
 from models.seed_iv_baselines import SeedIVBaseline
 from models.seed_iv_fuzzy_attention import SeedIVFuzzyAttention
 from training import Trainer
@@ -150,6 +161,145 @@ def set_reproducibility(args):
     torch.use_deterministic_algorithms(args.deterministic, warn_only=True)
 
 
+def build_model(args):
+    """Build one of the frozen SEED-IV paper models from CLI arguments."""
+    if args.model in BASELINE_MODES:
+        return SeedIVBaseline(
+            mode=BASELINE_MODES[args.model],
+            hidden_dim=args.hidden_dim,
+            embedding_dim=args.embedding_dim,
+            dropout=args.dropout_rate,
+            num_classes=len(CLASS_NAMES),
+        )
+    return SeedIVFuzzyAttention(
+        dimension=args.attention_dim,
+        num_heads=args.attention_heads,
+        num_layers=args.attention_layers,
+        ffn_dimension=args.attention_ffn_dim,
+        dropout=args.attention_dropout,
+        num_classes=len(CLASS_NAMES),
+        use_fuzzy=args.model == "SeedIVIT2FuzzyAttention",
+        fuzzy_rules=args.fuzzy_rules,
+        uncertainty_penalty=args.uncertainty_penalty,
+    )
+
+
+def classification_metrics(targets, predictions):
+    """Return JSON-serializable four-class paper metrics."""
+    targets = np.asarray(targets, dtype=np.int64)
+    predictions = np.asarray(predictions, dtype=np.int64)
+    labels = np.arange(len(CLASS_NAMES))
+    matrix = confusion_matrix(targets, predictions, labels=labels)
+    row_totals = matrix.sum(axis=1, keepdims=True)
+    normalized = np.divide(
+        matrix,
+        row_totals,
+        out=np.zeros_like(matrix, dtype=np.float64),
+        where=row_totals != 0,
+    )
+    precision, recall, class_f1, support = precision_recall_fscore_support(
+        targets,
+        predictions,
+        labels=labels,
+        zero_division=0,
+    )
+    return {
+        "accuracy_pct": float(accuracy_score(targets, predictions) * 100.0),
+        "macro_f1": float(
+            f1_score(targets, predictions, average="macro", zero_division=0)
+        ),
+        "confusion_matrix": matrix.tolist(),
+        "normalized_confusion_matrix": normalized.tolist(),
+        "per_class": {
+            class_name: {
+                "precision": float(precision[index]),
+                "recall": float(recall[index]),
+                "f1": float(class_f1[index]),
+                "support": int(support[index]),
+            }
+            for index, class_name in enumerate(CLASS_NAMES)
+        },
+    }
+
+
+def metrics_from_confusion_matrix(matrix):
+    """Derive pooled four-class metrics from an accumulated confusion matrix."""
+    matrix = np.asarray(matrix, dtype=np.int64)
+    expected_shape = (len(CLASS_NAMES), len(CLASS_NAMES))
+    if matrix.shape != expected_shape:
+        raise ValueError(
+            f"confusion matrix must have shape {expected_shape}, got {matrix.shape}."
+        )
+    support = matrix.sum(axis=1)
+    predicted_count = matrix.sum(axis=0)
+    true_positive = np.diag(matrix).astype(np.float64)
+    precision = np.divide(
+        true_positive,
+        predicted_count,
+        out=np.zeros(len(CLASS_NAMES), dtype=np.float64),
+        where=predicted_count != 0,
+    )
+    recall = np.divide(
+        true_positive,
+        support,
+        out=np.zeros(len(CLASS_NAMES), dtype=np.float64),
+        where=support != 0,
+    )
+    class_f1 = np.divide(
+        2.0 * precision * recall,
+        precision + recall,
+        out=np.zeros(len(CLASS_NAMES), dtype=np.float64),
+        where=(precision + recall) != 0,
+    )
+    normalized = np.divide(
+        matrix,
+        support[:, None],
+        out=np.zeros_like(matrix, dtype=np.float64),
+        where=support[:, None] != 0,
+    )
+    total = matrix.sum()
+    return {
+        "accuracy_pct": float(100.0 * true_positive.sum() / total),
+        "macro_f1": float(class_f1.mean()),
+        "confusion_matrix": matrix.tolist(),
+        "normalized_confusion_matrix": normalized.tolist(),
+        "per_class": {
+            class_name: {
+                "precision": float(precision[index]),
+                "recall": float(recall[index]),
+                "f1": float(class_f1[index]),
+                "support": int(support[index]),
+            }
+            for index, class_name in enumerate(CLASS_NAMES)
+        },
+    }
+
+
+def predict(trainer, data_loader):
+    """Collect held-out labels and predictions without changing model state."""
+    trainer.net.eval()
+    predictions = []
+    targets = []
+    with torch.no_grad():
+        for inputs, labels in data_loader:
+            if trainer.use_cuda:
+                device = f"cuda:{trainer.gpu_num}"
+                inputs = trainer._move_to_device(inputs, device)
+            logits = trainer._forward_inputs(inputs)
+            predictions.append(logits.argmax(dim=1).cpu().numpy())
+            targets.append(labels.numpy())
+    return np.concatenate(targets), np.concatenate(predictions)
+
+
+def save_json_atomic(path, payload):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_suffix(path.suffix + ".tmp")
+    with temporary_path.open("w", encoding="utf-8") as output_file:
+        json.dump(payload, output_file, ensure_ascii=False, indent=2)
+    temporary_path.replace(path)
+
+
 def run_fold(args):
     set_reproducibility(args)
     num_workers = cpu_count() if args.num_workers == "max" else args.num_workers
@@ -174,26 +324,7 @@ def run_fold(args):
     print("Eye shape:", inputs["eye"].shape)
     print("Label shape:", labels.shape)
 
-    if args.model in BASELINE_MODES:
-        network = SeedIVBaseline(
-            mode=BASELINE_MODES[args.model],
-            hidden_dim=args.hidden_dim,
-            embedding_dim=args.embedding_dim,
-            dropout=args.dropout_rate,
-            num_classes=4,
-        )
-    else:
-        network = SeedIVFuzzyAttention(
-            dimension=args.attention_dim,
-            num_heads=args.attention_heads,
-            num_layers=args.attention_layers,
-            ffn_dimension=args.attention_ffn_dim,
-            dropout=args.attention_dropout,
-            num_classes=4,
-            use_fuzzy=args.model == "SeedIVIT2FuzzyAttention",
-            fuzzy_rules=args.fuzzy_rules,
-            uncertainty_penalty=args.uncertainty_penalty,
-        )
+    network = build_model(args)
     parameter_count = sum(
         parameter.numel()
         for parameter in network.parameters()
@@ -254,11 +385,13 @@ def run_fold(args):
             checkpoint_path=training_result["checkpoint_path"],
             split="test",
         )
+        targets, predictions = predict(trainer, test_loader)
     finally:
         wandb.finish()
 
     split = get_subject_split(args.fold)
-    return {
+    paper_metrics = classification_metrics(targets, predictions)
+    result = {
         "fold": args.fold,
         "train_subjects": list(split["train"]),
         "validation_subject": split["validation"][0],
@@ -271,7 +404,10 @@ def run_fold(args):
         "test_loss": test_result["loss"],
         "test_accuracy": test_result["accuracy"],
         "test_f1": test_result["f1"],
+        **paper_metrics,
     }
+    save_json_atomic(Path(args.checkpoint_folder) / "metrics.json", result)
+    return result
 
 
 def summarize_loso_results(fold_results):
@@ -292,25 +428,62 @@ def summarize_loso_results(fold_results):
     return aggregate
 
 
+def fold_coverage_complete(fold_results):
+    """Return True only for the frozen 15-fold subject rotation."""
+    if len(fold_results) != len(SUBJECT_IDS):
+        return False
+    try:
+        for result in fold_results:
+            split = get_subject_split(result["fold"])
+            if set(result["train_subjects"]) != set(split["train"]):
+                return False
+            if result["validation_subject"] != split["validation"][0]:
+                return False
+            if result["test_subject"] != split["test"][0]:
+                return False
+    except (KeyError, TypeError, ValueError):
+        return False
+    return (
+        sorted(result["fold"] for result in fold_results)
+        == list(range(len(SUBJECT_IDS)))
+        and sorted(result["test_subject"] for result in fold_results)
+        == list(SUBJECT_IDS)
+    )
+
+
 def save_loso_summary(output_directory, args, fold_results):
     """Persist partial or complete LOSO results after every successful fold."""
     output_directory = Path(output_directory)
     output_directory.mkdir(parents=True, exist_ok=True)
+    complete = fold_coverage_complete(fold_results)
     payload = {
         "model": args.model,
         "seed": args.seed,
         "completed_folds": len(fold_results),
         "expected_folds": len(SUBJECT_IDS),
-        "complete": len(fold_results) == len(SUBJECT_IDS),
+        "complete": complete,
         "config": vars(args),
         "folds": fold_results,
         "aggregate": summarize_loso_results(fold_results),
     }
+    if all("confusion_matrix" in result for result in fold_results):
+        pooled_matrix = np.sum(
+            [
+                np.asarray(result["confusion_matrix"], dtype=np.int64)
+                for result in fold_results
+            ],
+            axis=0,
+        )
+        payload["paper_aggregate"] = {
+            "subject_level": {
+                "accuracy_pct": payload["aggregate"]["test_accuracy"],
+                "macro_f1": payload["aggregate"]["test_f1"],
+            },
+            "pooled_test_samples": metrics_from_confusion_matrix(pooled_matrix),
+        }
+        payload["paper_metrics_complete"] = complete
     summary_path = output_directory / "loso_summary.json"
-    temporary_path = output_directory / "loso_summary.json.tmp"
-    with temporary_path.open("w", encoding="utf-8") as summary_file:
-        json.dump(payload, summary_file, ensure_ascii=False, indent=2)
-    temporary_path.replace(summary_path)
+    save_json_atomic(summary_path, payload)
     return summary_path, payload
 
 

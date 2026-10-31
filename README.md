@@ -172,6 +172,57 @@ smoothing、梯度范数裁剪 1.0，并继续按验证集 Macro-F1 选择 check
 估计每个 token 的可靠性及 FOU 不确定性，并将可靠性作为 attention logits
 的先验。普通注意力配置关闭模糊模块，用于隔离 IT2 模糊引导的贡献。
 
+方法来源说明：通用统计量（均值/标准差/能量）与区间二型 Gaussian 加权的
+设计与 Tang、Tang 和 Mo 的 IT2-GaussFormer 方法相关（Biomedical Signal
+Processing and Control, 2026，DOI：`10.1016/j.bspc.2026.110804`）；类型约简
+参考 Karnik–Mendel 算法（Information Sciences, 2001，
+DOI：`10.1016/S0020-0255(01)00069-X`）。本仓库代码是面向 SEED-IV EEG
+频带 token 与眼动语义 token 的项目内 PyTorch 适配实现，不是上述论文的
+官方代码。使用该模型撰写论文时必须引用相关工作，不应将通用统计量与 IT2
+加权本身表述为原创。
+
+### SEED-IV MAET
+
+仓库内的 `SeedIVMAET` 是 MAET 的独立 SEED-IV 适配：EEG 使用展平后的
+310 维 `[62, 5]` 特征，Eye 使用 31 维特征，分类头输出四类。它保留原模型
+的 MultiViewEmbedding、模态专属 FFN、共享 Transformer、后层 Mix-FFN、
+自适应融合和可选被试域对抗，不依赖 `timm` 或 `MAET/` 参考目录运行。原实现
+及 MIT 许可见 `MAET/model.py` 和 `MAET/LICENSE`。
+
+先在 CPU 上对普通版和域对抗版分别做 fold 0 冒烟测试：
+
+```bash
+conda activate mhyeeg
+python run_seed_iv_maet.py \
+  --config configs/seed_iv_maet.yml \
+  --mode concat --no-domain_generalization \
+  --fold 0 --smoke_test --no-cuda
+
+python run_seed_iv_maet.py \
+  --config configs/seed_iv_maet.yml \
+  --mode concat --domain_generalization \
+  --fold 0 --smoke_test --no-cuda
+```
+
+GPU 正式实验按顺序运行两套 15 折：
+
+```bash
+python run_seed_iv_maet.py \
+  --config configs/seed_iv_maet.yml \
+  --mode concat --no-domain_generalization --all_folds
+
+python run_seed_iv_maet.py \
+  --config configs/seed_iv_maet.yml \
+  --mode concat --domain_generalization --all_folds
+```
+
+EEG-only 和 Eye-only 接口可通过 `--mode eeg`、`--mode eye` 用于后续消融。
+输出按
+`checkpoints/seed_iv_maet/<mode>/<vanilla|dg>/seed_<seed>/fold_<fold>/`
+隔离；每折保存 `best.pt`、`metrics.json` 和训练历史，实验目录持续原子更新
+`loso_summary.json`。只有 15 名受试者恰好各测试一次的正式实验才会写出
+`complete=true`。
+
 ### 跨模态交叉注意力 H2
 
 `CrossAttentionH2` 保留 H2 的四路编码器和 PHM 分类头，将原有拼接融合替换为模态级交叉注意力。每个查询模态只能关注另外三个模态，不会读取自身特征。

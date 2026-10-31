@@ -1,0 +1,65 @@
+# Shared data and split
+dataset_root: "SEED_IV"
+eeg_feature_kind: "de_LDS"
+models:
+  - "linear_svm"
+  - "mlp"
+  - "dgcnn"
+fold: 0
+all_folds: false
+seed: 0
+
+# MLP
+hidden_dim: 128
+embedding_dim: 64
+dropout_rate: 0.3
+
+# DGCNN
+graph_channels: 32
+chebyshev_order: 2
+classifier_dim: 64
+
+# Linear SVM; select C on the held-out validation subject
+svm_c_values:
+  - 0.01
+  - 0.1
+  - 1.0
+  - 10.0
+svm_max_iter: 20000
+
+# Neural training
+epochs: 50
+patience: 10
+train_batch_size: 64
+test_batch_size: 128
+num_workers: 4
+weight_decay: 0.001
+label_smoothing: 0.05
+max_grad_norm: 1.0
+max_lr: 0.0003
+min_mom: 0.85
+max_mom: 0.95
+div_factor: 10
+final_div_factor: 100
+pct_start: 0.1
+
+# Reproducible FP32 execution
+cuda: true
+gpu_num: 0
+amp: false
+amp_dtype: "bfloat16"
+allow_tf32: false
+deterministic: true
+cudnn_benchmark: false
+
+# Local-first experiment tracking
+output_dir: "checkpoints/seed_iv_baselines"
+wandb_project: "MHyEEG-SEED-IV-Baselines"
+wandb_mode: "disabled"
+wandb_log_interval: 20
+
+# CPU smoke-test limits; these are never used for scientific results
+smoke_test: false
+smoke_epochs: 2
+smoke_train_samples: 2048
+smoke_eval_samples: 512

@@ -1,0 +1,47 @@
+# Shared data and 13/1/1 subject-independent split
+dataset_root: "SEED_IV"
+eeg_feature_kind: "de_LDS"
+mode: "concat"
+domain_generalization: false
+fold: 0
+all_folds: false
+seed: 0
+
+# Original MAET defaults, adapted to 310-D EEG, 31-D eye, and four classes
+embed_dim: 32
+depth: 3
+num_heads: 4
+mlp_ratio: 4.0
+drop_rate: 0.0
+attn_drop_rate: 0.0
+drop_path_rate: 0.0
+mixffn_start_layer_index: 2
+
+# Training
+epochs: 50
+patience: 10
+train_batch_size: 64
+test_batch_size: 128
+num_workers: 4
+max_lr: 0.0003
+weight_decay: 0.001
+emotion_label_smoothing: 0.05
+domain_loss_weight: 1.0
+max_grad_norm: 1.0
+pct_start: 0.1
+div_factor: 10.0
+final_div_factor: 100.0
+
+# Reproducible FP32 execution
+cuda: true
+gpu_num: 0
+deterministic: true
+allow_tf32: false
+
+output_dir: "checkpoints/seed_iv_maet"
+
+# CPU-only integration check; never use smoke results as scientific results
+smoke_test: false
+smoke_epochs: 2
+smoke_train_samples: 512
+smoke_eval_samples: 256

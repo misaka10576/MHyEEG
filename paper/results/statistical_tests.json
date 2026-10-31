@@ -1,0 +1,210 @@
+{
+  "complete_models": [
+    "EEG MLP",
+    "DGCNN",
+    "MAET-Concat",
+    "Eye MLP",
+    "Concat MLP",
+    "Attention",
+    "IT2 Fuzzy"
+  ],
+  "comparisons": [
+    {
+      "metric": "accuracy_pct",
+      "family": "reliability_analysis",
+      "model_a": "IT2 Fuzzy",
+      "model_b": "Eye MLP",
+      "mean_difference_a_minus_b": -15.025948103792416,
+      "difference_95pct_bootstrap_ci": [
+        -21.165735196274124,
+        -8.26074517631404
+      ],
+      "wilcoxon_statistic": 8.0,
+      "p_value": 0.00152587890625,
+      "holm_adjusted_p": 0.00762939453125
+    },
+    {
+      "metric": "accuracy_pct",
+      "family": "reliability_analysis",
+      "model_a": "IT2 Fuzzy",
+      "model_b": "Concat MLP",
+      "mean_difference_a_minus_b": -2.956753160345973,
+      "difference_95pct_bootstrap_ci": [
+        -9.796806387225544,
+        4.026679973386561
+      ],
+      "wilcoxon_statistic": 43.0,
+      "p_value": 0.359130859375,
+      "holm_adjusted_p": 0.90838623046875
+    },
+    {
+      "metric": "accuracy_pct",
+      "family": "reliability_analysis",
+      "model_a": "IT2 Fuzzy",
+      "model_b": "Attention",
+      "mean_difference_a_minus_b": -0.9394544244843649,
+      "difference_95pct_bootstrap_ci": [
+        -4.125149700598802,
+        2.1504990019960077
+      ],
+      "wilcoxon_statistic": 53.0,
+      "p_value": 0.7197265625,
+      "holm_adjusted_p": 0.90838623046875
+    },
+    {
+      "metric": "accuracy_pct",
+      "family": "reliability_analysis",
+      "model_a": "IT2 Fuzzy",
+      "model_b": "MAET-Concat",
+      "mean_difference_a_minus_b": -1.7644710578842293,
+      "difference_95pct_bootstrap_ci": [
+        -6.845109780439118,
+        3.643446440452428
+      ],
+      "wilcoxon_statistic": 41.0,
+      "p_value": 0.30279541015625,
+      "holm_adjusted_p": 0.90838623046875
+    },
+    {
+      "metric": "accuracy_pct",
+      "family": "negative_transfer_analysis",
+      "model_a": "Eye MLP",
+      "model_b": "Concat MLP",
+      "mean_difference_a_minus_b": 12.06919494344644,
+      "difference_95pct_bootstrap_ci": [
+        7.1696606786427175,
+        17.31743180306055
+      ],
+      "wilcoxon_statistic": 2.0,
+      "p_value": 0.00018310546875,
+      "holm_adjusted_p": 0.00128173828125
+    },
+    {
+      "metric": "accuracy_pct",
+      "family": "negative_transfer_analysis",
+      "model_a": "Eye MLP",
+      "model_b": "Attention",
+      "mean_difference_a_minus_b": 14.08649367930805,
+      "difference_95pct_bootstrap_ci": [
+        8.298070525615437,
+        19.56087824351297
+      ],
+      "wilcoxon_statistic": 7.0,
+      "p_value": 0.00115966796875,
+      "holm_adjusted_p": 0.0069580078125
+    },
+    {
+      "metric": "accuracy_pct",
+      "family": "negative_transfer_analysis",
+      "model_a": "Eye MLP",
+      "model_b": "MAET-Concat",
+      "mean_difference_a_minus_b": 13.261477045908185,
+      "difference_95pct_bootstrap_ci": [
+        6.530805056553562,
+        19.18050565535595
+      ],
+      "wilcoxon_statistic": 12.0,
+      "p_value": 0.0042724609375,
+      "holm_adjusted_p": 0.01708984375
+    },
+    {
+      "metric": "macro_f1",
+      "family": "reliability_analysis",
+      "model_a": "IT2 Fuzzy",
+      "model_b": "Eye MLP",
+      "mean_difference_a_minus_b": -0.1824478891844099,
+      "difference_95pct_bootstrap_ci": [
+        -0.25372498947240874,
+        -0.1045935286410118
+      ],
+      "wilcoxon_statistic": 7.0,
+      "p_value": 0.00115966796875,
+      "holm_adjusted_p": 0.0069580078125
+    },
+    {
+      "metric": "macro_f1",
+      "family": "reliability_analysis",
+      "model_a": "IT2 Fuzzy",
+      "model_b": "Concat MLP",
+      "mean_difference_a_minus_b": -0.028518321165279373,
+      "difference_95pct_bootstrap_ci": [
+        -0.10801715934394228,
+        0.04894989878586942
+      ],
+      "wilcoxon_statistic": 49.0,
+      "p_value": 0.5614013671875,
+      "holm_adjusted_p": 1.0
+    },
+    {
+      "metric": "macro_f1",
+      "family": "reliability_analysis",
+      "model_a": "IT2 Fuzzy",
+      "model_b": "Attention",
+      "mean_difference_a_minus_b": -0.010963127854407999,
+      "difference_95pct_bootstrap_ci": [
+        -0.047845933149794566,
+        0.026031517013279572
+      ],
+      "wilcoxon_statistic": 51.0,
+      "p_value": 0.638671875,
+      "holm_adjusted_p": 1.0
+    },
+    {
+      "metric": "macro_f1",
+      "family": "reliability_analysis",
+      "model_a": "IT2 Fuzzy",
+      "model_b": "MAET-Concat",
+      "mean_difference_a_minus_b": -0.006256832600745991,
+      "difference_95pct_bootstrap_ci": [
+        -0.06067281007721266,
+        0.05391327956079383
+      ],
+      "wilcoxon_statistic": 43.0,
+      "p_value": 0.359130859375,
+      "holm_adjusted_p": 1.0
+    },
+    {
+      "metric": "macro_f1",
+      "family": "negative_transfer_analysis",
+      "model_a": "Eye MLP",
+      "model_b": "Concat MLP",
+      "mean_difference_a_minus_b": 0.15392956801913055,
+      "difference_95pct_bootstrap_ci": [
+        0.0924572462447053,
+        0.2174732814539637
+      ],
+      "wilcoxon_statistic": 3.0,
+      "p_value": 0.00030517578125,
+      "holm_adjusted_p": 0.00213623046875
+    },
+    {
+      "metric": "macro_f1",
+      "family": "negative_transfer_analysis",
+      "model_a": "Eye MLP",
+      "model_b": "Attention",
+      "mean_difference_a_minus_b": 0.17148476133000193,
+      "difference_95pct_bootstrap_ci": [
+        0.10172159569265925,
+        0.23764868184951599
+      ],
+      "wilcoxon_statistic": 7.0,
+      "p_value": 0.00115966796875,
+      "holm_adjusted_p": 0.0069580078125
+    },
+    {
+      "metric": "macro_f1",
+      "family": "negative_transfer_analysis",
+      "model_a": "Eye MLP",
+      "model_b": "MAET-Concat",
+      "mean_difference_a_minus_b": 0.17619105658366394,
+      "difference_95pct_bootstrap_ci": [
+        0.102107605047064,
+        0.24257169160769482
+      ],
+      "wilcoxon_statistic": 8.0,
+      "p_value": 0.00152587890625,
+      "holm_adjusted_p": 0.0069580078125
+    }
+  ],
+  "note": "Wilcoxon tests are paired by held-out subject. The comparison pairs are fixed in COMPARISON_PAIRS; Holm correction is applied jointly to all listed comparisons within each metric."
+}

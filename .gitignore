@@ -6,3 +6,6 @@ __pycache__/
 *.py[cod]
 /wandb/
 /checkpoints/
+
+# BERN 的 ImageNet 预训练权重缓存（45M，可由 torchvision 重新下载）
+BERN/cache/

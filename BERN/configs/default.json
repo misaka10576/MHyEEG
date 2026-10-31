@@ -1,0 +1,20 @@
+{
+  "dataset_root": "SEED_IV",
+  "output_dir": "BERN/outputs/vector_attention",
+  "cache_dir": "BERN/cache",
+  "eeg_feature_kind": "de_LDS",
+  "seed": 2024,
+  "batch_size": 32,
+  "learning_rate": 0.0001,
+  "weight_decay": 0.01,
+  "max_epochs": 500,
+  "patience": 50,
+  "num_workers": 0,
+  "device": "cuda",
+  "pretrained": true,
+  "deterministic": true,
+  "fusion_num_tokens": 8,
+  "fusion_token_dim": 32,
+  "fusion_num_heads": 4,
+  "fusion_variant": "vector_token_v2"
+}

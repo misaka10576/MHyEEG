@@ -1,4 +1,19 @@
-"""Uncertainty-aware attention for aligned SEED-IV EEG and eye features."""
+"""Uncertainty-aware attention for aligned SEED-IV EEG and eye features.
+
+Method provenance
+-----------------
+The generic-statistics/interval-type-2 weighting design is methodologically
+related to Tang, Tang, and Mo, "IT2-GaussFormer: An interval type-2 Gaussian
+fuzzy transformer for medical time-series classification," Biomedical Signal
+Processing and Control, 2026, doi:10.1016/j.bspc.2026.110804. Type reduction
+follows the Karnik-Mendel family of algorithms (Karnik and Mendel, Information
+Sciences 132, 2001, doi:10.1016/S0020-0255(01)00069-X).
+
+This file is a project-local PyTorch implementation adapted to heterogeneous
+SEED-IV EEG frequency-band tokens and eye-movement semantic tokens. It is not
+official code from either cited work, and the cited ideas must be acknowledged
+in any publication that uses this implementation.
+"""
 
 import math
 from typing import Dict, List, Tuple, Union
